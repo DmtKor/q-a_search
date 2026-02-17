@@ -1,0 +1,29 @@
+# Dependencies
+node_modules/
+
+# Env / secrets
+.env
+.env.local
+*.local
+
+# Build / binaries
+bin/
+dist/
+*.exe
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Go
+*.test
+*.out
+vendor/
+
+# Logs / temp
+*.log
+tmp/
+temp/

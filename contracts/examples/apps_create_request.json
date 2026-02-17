@@ -1,0 +1,9 @@
+{
+  "name": "Mobile App",
+  "settings": {
+    "search": {
+      "default_top_k": 10,
+      "confidence_threshold": 0.5
+    }
+  }
+}

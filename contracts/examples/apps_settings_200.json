@@ -1,0 +1,6 @@
+{
+  "search": {
+    "default_top_k": 5,
+    "confidence_threshold": 0.6
+  }
+}

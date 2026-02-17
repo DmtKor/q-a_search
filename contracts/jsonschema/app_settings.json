@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://api.example.com/schemas/app_settings.json",
+  "title": "AppSettings",
+  "description": "Application settings (e.g. search defaults). Stored in apps.settings JSONB.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "search": {
+      "type": "object",
+      "description": "Search module settings",
+      "properties": {
+        "default_top_k": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 50,
+          "description": "Default number of chunks to return"
+        },
+        "confidence_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Below this threshold a ticket is created"
+        }
+      }
+    }
+  }
+}

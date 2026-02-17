@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "conflict",
+    "message": "Invalid status transition",
+    "details": null
+  }
+}

@@ -1,0 +1,298 @@
+# Спецификация системы (Final)
+
+## 1. Компоненты и их взаимодействие
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        Клиенты (Apps)                           │
+│            (Сайт, Мобильное приложение, CRM оператора)          │
+└─────────────────────────────┬───────────────────────────────────┘
+                              │ Authorization: Bearer <token>
+                              ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                        API / Auth Middleware                    │
+│        Единая проверка токена + роль (app/staff) + права        │
+└───────────┬──────────────────────────────────┬──────────────────┘
+            │                                   │
+            ▼                                   ▼
+┌───────────────────────┐          ┌───────────────────────────┐
+│   Search API          │          │    Staff API               │
+│   POST /api/v1/search │          │    CRUD /api/v1/cases      │
+│   (app + staff)       │          │    Tickets /api/v1/tickets │
+└───────────┬───────────┘          │    Apps /api/v1/apps       │
+            │                      └─────────────┬─────────────┘
+            ▼                                      │
+┌─────────────────────────────────────────────────────────────────┐
+│                     PostgreSQL + pgvector                         │
+├─────────────────────────────────────────────────────────────────┤
+│  Таблица: cases                                                  │
+│  - Все кейсы со всеми статусами (draft/pending/approved/archived) │
+│                                                                   │
+│  Таблица: case_embeddings                                         │
+│  - Один вектор на кейс (keywords + questions)                     │
+│  - Только для approved                                            │
+│                                                                   │
+│  Таблица: tickets (неотвеченные запросы)                         │
+│  - Сюда попадают запросы с низким confidence                      │
+│                                                                   │
+│  Таблица: request_metrics (метрики без query)                     │
+│  Таблица: apps (настройки приложений)                             │
+│  Таблица: auth_tokens (токены доступа)                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+## 2. Детализация API
+
+### 2.1 Аутентификация (единая)
+- **Заголовок:** `Authorization: Bearer <token>`
+- **Типы токенов:**
+  - **app**: приложение/клиент (может выполнять поиск)
+  - **staff**: сотрудник (может выполнять поиск + управлять кейсами/тикетами/настройками)
+- **Роль (на будущее):** хранится в токене (например `admin/operator/viewer`), но в MVP достаточно разделения `app`/`staff`.
+- **Правила доступа:**
+  - `POST /api/v1/search`: **app + staff**
+  - `cases`, `tickets`, `apps`: **только staff**
+  - `draft` кейсы: **доступны только создателю** (по умолчанию)
+
+### 2.2 Search API (Hybrid: pgvector + FTS)
+- **Эндпоинт:** `POST /api/v1/search`
+- **Доступ:** app + staff
+- **Тело запроса:**
+  ```json
+  {
+    "query": "как сменить пароль",
+    "category": "security",
+    "top_k": 5,
+    "user_context": {
+      "is_authenticated": true,
+      "plan": "premium",
+      "name": "Иван"
+    }
+  }
+  ```
+- **Правила:**
+  - Если `category` не передана — ищем **по всем категориям**.
+  - Ищем **только по кейсам со статусом `approved`**.
+  - Вектор строится по метаданным кейса: **`keywords + questions`**, один вектор на один кейс.
+  - В Postgres храним embedding **только для `approved`**. Для тестирования `draft/pending_review` embedding считается на стороне клиента и в БД не пишется.
+- **Поиск:**
+  - **Векторный** (pgvector) по `case_embeddings.embedding`
+  - **Полнотекстовый** (PostgreSQL FTS) по `cases.search_tsv`
+  - Результаты объединяются в общий ранк (формула может меняться без смены контракта API).
+- **Confidence:**
+  - `confidence` в ответе — **косинусная близость** (cosine similarity) между embedding запроса и embedding кейса.
+  - Важно: даже при гибридном ранжировании (vector+FTS) поле `confidence` остается **векторным** скором (cosine).
+- **Тикет:**
+  - Если `confidence` ниже порога — создаём `ticket` и включаем его в ответ.
+  - Текст `query` сохраняем только в `tickets` (метрики — без query).
+- **Ответ:**
+  ```json
+  {
+    "chunks": [
+      {
+        "case_id": "6d7c7e1e-8e5b-4d2a-9c1f-0f9b0a9a1b2c",
+        "title": "Смена пароля",
+        "text": "Чтобы сменить пароль, откройте Настройки → Безопасность → Смена пароля...",
+        "confidence": 0.82
+      }
+    ],
+    "ticket": {
+      "id": "f1d2d2f9-6f7a-4c3d-bd2a-0c0a0c0a0c0a",
+      "url": "/app/tickets/f1d2d2f9-6f7a-4c3d-bd2a-0c0a0c0a0c0a"
+    }
+  }
+  ```
+
+### 2.3 Staff API (Management)
+- **Доступ:** только staff
+
+#### 2.3.1 Cases CRUD
+- `GET /api/v1/cases?status=approved&category=security&mine=true`
+- `POST /api/v1/cases` — создать кейс (`draft`)
+- `GET /api/v1/cases/{id}`
+- `PUT /api/v1/cases/{id}` — обновить кейс (без смены статуса)
+- `DELETE /api/v1/cases/{id}` — архивировать (статус `archived`)
+
+#### 2.3.2 Смена статуса кейса
+- `POST /api/v1/cases/{id}/status`
+  ```json
+  { "status": "pending_review", "comment": "готово к проверке" }
+  ```
+- Переходы (MVP):
+  - **создатель**: `draft → pending_review`
+  - **staff**: `pending_review → approved` или `pending_review → draft`
+  - **staff**: `approved → archived`
+- Индексация в `case_embeddings`:
+  - при `→ approved`: вычислить embedding и записать
+  - при `approved → ...`: удалить embedding
+
+#### 2.3.3 Import/Export cases (JSON file)
+- `POST /api/v1/cases/import?mode=merge|draft|replace`
+  - `replace`: **удалить всё и заменить импортом** (режим отката)
+- `GET /api/v1/cases/export?category=billing&status=approved`
+
+#### 2.3.4 Tickets API
+- `GET /api/v1/tickets?status=open&category=security`
+- `POST /api/v1/tickets` — ручное создание (опционально)
+- `GET /api/v1/tickets/{id}`
+- `PUT /api/v1/tickets/{id}` — `status/assigned_to/resolution_notes/converted_to_case_id`
+- `POST /api/v1/tickets/{id}/convert-to-case` — создать `draft` кейс и связать (опционально)
+
+#### 2.3.5 Apps settings API (JSON + импорт/экспорт файлом)
+- `GET /api/v1/apps`
+- `POST /api/v1/apps`
+- `GET /api/v1/apps/{id}`
+- `PUT /api/v1/apps/{id}`
+- `GET /api/v1/apps/{id}/settings`
+- `PUT /api/v1/apps/{id}/settings`
+- `GET /api/v1/apps/{id}/settings/export`
+- `POST /api/v1/apps/{id}/settings/import`
+
+## 3. Модели данных (примерно)
+
+### Таблица `cases`
+```sql
+CREATE TABLE cases (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category VARCHAR(100) NOT NULL,
+    title TEXT NOT NULL,
+    questions JSONB NOT NULL, -- массив строк (примеры вопросов)
+    keywords JSONB, -- массив строк (метаданные), опционально
+    response_template TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'draft', -- draft, pending_review, approved, archived
+    created_by VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_by VARCHAR(100),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    approved_by VARCHAR(100),
+    approved_at TIMESTAMP,
+    notes TEXT
+);
+
+CREATE INDEX idx_cases_status ON cases(status);
+CREATE INDEX idx_cases_category ON cases(category);
+CREATE INDEX idx_cases_updated_at ON cases(updated_at);
+
+-- Полнотекстовый поиск (гибридно с pgvector), заполняется в обработчиках/триггерах:
+ALTER TABLE cases ADD COLUMN search_tsv tsvector;
+CREATE INDEX idx_cases_search_tsv ON cases USING GIN(search_tsv);
+```
+
+### Таблица `case_embeddings` (pgvector, только approved)
+```sql
+-- Требуется расширение pgvector:
+-- CREATE EXTENSION IF NOT EXISTS vector;
+
+CREATE TABLE case_embeddings (
+    case_id UUID PRIMARY KEY REFERENCES cases(id) ON DELETE CASCADE,
+    embedding vector, -- размерность зависит от выбранной модели эмбеддингов
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Индекс для ANN-поиска (пример, зависит от метрики):
+-- Для косинусной близости:
+-- CREATE INDEX idx_case_embeddings_hnsw ON case_embeddings USING hnsw (embedding vector_cosine_ops);
+```
+
+### Таблица `tickets` (неотвеченные запросы)
+```sql
+CREATE TABLE tickets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    query TEXT NOT NULL,
+    category VARCHAR(100), -- предположительная категория (если указана)
+    confidence FLOAT, -- какой был скор при поиске (чтобы понимать, насколько близко)
+    status VARCHAR(20) DEFAULT 'open', -- open, in_progress, resolved, closed
+    assigned_to VARCHAR(100),
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    resolved_at TIMESTAMP,
+    resolution_notes TEXT, -- как ответили, может стать новым кейсом
+    converted_to_case_id UUID REFERENCES cases(id) -- если на основе тикета создали кейс
+);
+
+CREATE INDEX idx_tickets_status ON tickets(status);
+CREATE INDEX idx_tickets_created_at ON tickets(created_at);
+```
+
+### Таблица `request_metrics` (метрики/мониторинг без query)
+```sql
+CREATE TABLE request_metrics (
+    id BIGSERIAL PRIMARY KEY,
+    endpoint TEXT NOT NULL,
+    status_code INT NOT NULL,
+    response_time_ms INT NOT NULL,
+    token_id UUID,
+    app_id UUID,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_request_metrics_created_at ON request_metrics(created_at);
+CREATE INDEX idx_request_metrics_endpoint ON request_metrics(endpoint);
+```
+
+### Таблица `apps` (клиенты/приложения + настройки)
+```sql
+CREATE TABLE apps (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name TEXT NOT NULL,
+    settings JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE UNIQUE INDEX uq_apps_name ON apps(name);
+```
+
+### Таблица `auth_tokens` (единый доступ: app + staff)
+```sql
+CREATE TABLE auth_tokens (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    token_hash TEXT NOT NULL, -- храним только хеш
+    token_type VARCHAR(20) NOT NULL, -- app или staff
+    role VARCHAR(50), -- на будущее
+    app_id UUID REFERENCES apps(id),
+    label TEXT,
+    is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    expires_at TIMESTAMP,
+    last_used_at TIMESTAMP,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_auth_tokens_type ON auth_tokens(token_type);
+CREATE INDEX idx_auth_tokens_app_id ON auth_tokens(app_id);
+```
+## 4. Процессы
+
+### Процесс 1: Оператор отвечает на новый вопрос
+1. Пользователь задает вопрос → `POST /api/v1/search`.
+2. Если `confidence` ниже порога, сервер создает `ticket` со статусом `open` и возвращает `ticket.id`/`ticket.url` вместе с `chunks`.
+3. Сотрудник открывает тикет, заполняет `resolution_notes`, меняет `status` (например `in_progress` → `resolved`).
+4. При необходимости сотрудник создает `draft` кейс на основе тикета (через UI или `POST /api/v1/tickets/{id}/convert-to-case`), тикет получает `converted_to_case_id`.
+
+### Процесс 2: Администратор проверяет новые кейсы
+1. Создатель кейса переводит `draft → pending_review` через `POST /api/v1/cases/{id}/status`.
+2. Ревьюер (staff) фильтрует `pending_review` и проверяет кейс.
+3. Если ок: `pending_review → approved`.
+   - Сервер вычисляет embedding по `keywords + questions` и записывает в `case_embeddings`.
+4. Если не ок: `pending_review → draft` с комментарием.
+5. Если кейс устарел: `approved → archived` (и удаление записи из `case_embeddings`).
+
+### Процесс 3: Мониторинг качества
+1. Мониторинг делаем по `request_metrics` (latency, ошибки, нагрузка) и по очереди `tickets`.
+2. Улучшение базы знаний — через анализ тикетов и добавление/редактирование кейсов.
+
+## 5. Технический стек (предположительно)
+
+- **API/бэкенд:** Go (HTTP API, auth middleware, рендеринг `text/template`).
+- **База:** PostgreSQL + `pgvector` + PostgreSQL Full-Text Search (GIN `tsvector`).
+- **Админка/GUI (опционально для MVP):** простой веб-интерфейс (например HTMX) или SPA (React/Vue).
+- **Метрики:** `request_metrics` в Postgres (MVP) + внешние метрики (OTel/Prometheus) при необходимости.
+
+---
+
+Это полностью самодостаточная спецификация. Она учитывает:
+- Безопасность (разделение API, статусы кейсов).
+- Операционную работу (тикеты, очереди на модерацию).
+- Масштабирование (метрики в отдельной таблице, индексы).
+- Интеграцию с бизнес-процессами (операторы создают кейсы).

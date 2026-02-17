@@ -1,0 +1,12 @@
+{
+  "id": "d4e5f6a7-b8c9-0123-def0-234567890123",
+  "name": "Customer Portal",
+  "settings": {
+    "search": {
+      "default_top_k": 5,
+      "confidence_threshold": 0.6
+    }
+  },
+  "created_at": "2025-01-01T00:00:00Z",
+  "updated_at": "2025-01-01T00:00:00Z"
+}

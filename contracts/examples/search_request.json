@@ -1,0 +1,10 @@
+{
+  "query": "как сменить пароль",
+  "category": "security",
+  "top_k": 5,
+  "user_context": {
+    "is_authenticated": true,
+    "plan": "premium",
+    "name": "Иван"
+  }
+}

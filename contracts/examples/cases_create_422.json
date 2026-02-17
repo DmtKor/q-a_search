@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "validation_error",
+    "message": "Invalid request body",
+    "details": { "field": "response_template", "reason": "required" }
+  }
+}

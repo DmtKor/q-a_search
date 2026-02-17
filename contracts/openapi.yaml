@@ -1,0 +1,720 @@
+openapi: 3.0.3
+info:
+  title: Knowledge Base API
+  description: Search, Cases, Tickets, Apps & Settings. Auth via Bearer token (app | staff).
+  version: 1.0.0
+
+servers:
+  - url: /api/v1
+    description: API v1
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: search
+    description: Hybrid search (pgvector + FTS); app + staff
+  - name: cases
+    description: Cases CRUD, status, import/export; staff only; draft only for creator
+  - name: tickets
+    description: Tickets CRUD, convert-to-case; staff only
+  - name: apps
+    description: Apps and settings; staff only
+
+paths:
+  /search:
+    post:
+      tags: [search]
+      summary: Hybrid search (pgvector + FTS)
+      description: "Search approved cases. Returns chunks with confidence (cosine similarity). If top result confidence < threshold, creates ticket and returns ticket ref. Access: app + staff."
+      operationId: search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SearchRequest' }
+      responses:
+        '200':
+          description: Search results (chunks; optional ticket if low confidence)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SearchResponse' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /cases:
+    get:
+      tags: [cases]
+      summary: List cases
+      description: Staff only. Optional filters status, category, mine (created_by = principal).
+      operationId: listCases
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, pending_review, approved, archived] }
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: mine
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: List of cases
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [cases]
+      summary: Create case (draft)
+      description: Staff only. Creates draft; created_by = principal.
+      operationId: createCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaseCreate' }
+      responses:
+        '201':
+          description: Case created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /cases/import:
+    post:
+      tags: [cases]
+      summary: Import cases (JSON)
+      description: Staff only. mode=merge|draft|replace. replace deletes all cases and case_embeddings, then imports.
+      operationId: importCases
+      parameters:
+        - name: mode
+          in: query
+          required: true
+          schema: { type: string, enum: [merge, draft, replace] }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaseImportBody' }
+      responses:
+        '200':
+          description: Import result
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResult' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /cases/export:
+    get:
+      tags: [cases]
+      summary: Export cases (JSON)
+      description: Staff only. Optional filters category, status.
+      operationId: exportCases
+      parameters:
+        - name: category
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { type: string, enum: [draft, pending_review, approved, archived] }
+      responses:
+        '200':
+          description: JSON array of cases
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /cases/{id}:
+    get:
+      tags: [cases]
+      summary: Get case by ID
+      description: Staff only. Draft only for creator (created_by == principal).
+      operationId: getCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '200':
+          description: Case
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [cases]
+      summary: Update case
+      description: Staff only. Cannot change status via PUT (use status endpoint). Draft only for creator.
+      operationId: updateCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CaseUpdate' }
+      responses:
+        '200':
+          description: Updated case
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+    delete:
+      tags: [cases]
+      summary: Delete (archive) case
+      description: Staff only. Draft only creator. Typically sets status to archived or hard delete per policy.
+      operationId: deleteCase
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      responses:
+        '204':
+          description: No content
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /cases/{id}/status:
+    post:
+      tags: [cases]
+      summary: Change case status
+      description: "Staff only. Allowed transitions: creator draft→pending_review; staff pending_review→approved|draft; staff approved→archived."
+      operationId: changeCaseStatus
+      parameters:
+        - $ref: '#/components/parameters/CaseId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StatusChangeRequest' }
+      responses:
+        '200':
+          description: Updated case
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Case' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /tickets:
+    get:
+      tags: [tickets]
+      summary: List tickets
+      description: Staff only.
+      operationId: listTickets
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [open, in_progress, resolved, closed] }
+        - name: category
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: List of tickets
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/TicketListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [tickets]
+      summary: Create ticket (manual)
+      description: Staff only. Optional manual creation.
+      operationId: createTicket
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketCreate' }
+      responses:
+        '201':
+          description: Ticket created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /tickets/{id}:
+    get:
+      tags: [tickets]
+      summary: Get ticket by ID
+      operationId: getTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      responses:
+        '200':
+          description: Ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [tickets]
+      summary: Update ticket
+      operationId: updateTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TicketUpdate' }
+      responses:
+        '200':
+          description: Updated ticket
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Ticket' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /tickets/{id}/convert-to-case:
+    post:
+      tags: [tickets]
+      summary: Convert ticket to draft case
+      description: Staff only. Creates draft case with questions=[ticket.query], created_by=principal; sets ticket.converted_to_case_id.
+      operationId: convertTicketToCase
+      parameters:
+        - $ref: '#/components/parameters/TicketId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ConvertToCaseRequest' }
+      responses:
+        '200':
+          description: Conversion result (case id / link)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConvertToCaseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /apps:
+    get:
+      tags: [apps]
+      summary: List apps
+      operationId: listApps
+      responses:
+        '200':
+          description: List of apps
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      tags: [apps]
+      summary: Create app
+      operationId: createApp
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppCreate' }
+      responses:
+        '201':
+          description: App created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/App' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /apps/{id}:
+    get:
+      tags: [apps]
+      summary: Get app by ID
+      operationId: getApp
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      responses:
+        '200':
+          description: App
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/App' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [apps]
+      summary: Update app
+      operationId: updateApp
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppUpdate' }
+      responses:
+        '200':
+          description: Updated app
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/App' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /apps/{id}/settings:
+    get:
+      tags: [apps]
+      summary: Get app settings
+      operationId: getAppSettings
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      responses:
+        '200':
+          description: "Settings JSON (e.g. search.default_top_k, search.confidence_threshold)"
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [apps]
+      summary: Replace app settings (atomic)
+      operationId: updateAppSettings
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppSettings' }
+      responses:
+        '200':
+          description: Updated settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /apps/{id}/settings/export:
+    get:
+      tags: [apps]
+      summary: Export settings as JSON file
+      operationId: exportAppSettings
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      responses:
+        '200':
+          description: Settings JSON (download)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /apps/{id}/settings/import:
+    post:
+      tags: [apps]
+      summary: Import settings from JSON (replaces entire settings)
+      operationId: importAppSettings
+      parameters:
+        - $ref: '#/components/parameters/AppId'
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/AppSettings' }
+      responses:
+        '200':
+          description: Imported settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppSettings' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "Bearer token (token_type app or staff). Authorization Bearer &lt;token&gt;"
+
+  parameters:
+    CaseId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    TicketId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+    AppId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: unauthorized, message: Missing or invalid authorization token, details: null } }
+    Forbidden:
+      description: Valid token but insufficient permissions
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: forbidden, message: Access denied, details: null } }
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: not_found, message: Resource not found, details: { resource: case } } }
+    Conflict:
+      description: Conflict (e.g. duplicate, invalid state transition)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: conflict, message: Invalid status transition, details: null } }
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: validation_error, message: Invalid request body, details: { field: query, reason: required } } }
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+          example: { error: { code: internal_error, message: An internal error occurred, details: null } }
+
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [unauthorized, forbidden, validation_error, not_found, conflict, internal_error]
+            message: { type: string }
+            details: { type: object, nullable: true }
+
+    UserContext:
+      type: object
+      additionalProperties: true
+      description: Optional context for template rendering (e.g. is_authenticated, plan, name)
+
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        category: { type: string }
+        top_k: { type: integer, minimum: 1, maximum: 50 }
+        user_context: { $ref: '#/components/schemas/UserContext' }
+
+    Chunk:
+      type: object
+      required: [case_id, title, text, confidence]
+      properties:
+        case_id: { type: string, format: uuid }
+        title: { type: string }
+        text: { type: string }
+        confidence: { type: number, format: float, minimum: 0, maximum: 1 }
+
+    TicketRef:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        url: { type: string }
+
+    SearchResponse:
+      type: object
+      properties:
+        chunks:
+          type: array
+          items: { $ref: '#/components/schemas/Chunk' }
+        ticket: { $ref: '#/components/schemas/TicketRef' }
+
+    Case:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        category: { type: string }
+        title: { type: string }
+        questions: { type: array, items: { type: string } }
+        keywords: { type: array, items: { type: string } }
+        response_template: { type: string }
+        status: { type: string, enum: [draft, pending_review, approved, archived] }
+        created_by: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_by: { type: string, nullable: true }
+        updated_at: { type: string, format: date-time }
+        approved_by: { type: string, nullable: true }
+        approved_at: { type: string, format: date-time, nullable: true }
+        notes: { type: string, nullable: true }
+
+    CaseCreate:
+      type: object
+      required: [category, title, response_template]
+      properties:
+        category: { type: string }
+        title: { type: string }
+        questions: { type: array, items: { type: string }, default: [] }
+        keywords: { type: array, items: { type: string }, default: [] }
+        response_template: { type: string }
+
+    CaseUpdate:
+      type: object
+      properties:
+        category: { type: string }
+        title: { type: string }
+        questions: { type: array, items: { type: string } }
+        keywords: { type: array, items: { type: string } }
+        response_template: { type: string }
+        notes: { type: string }
+
+    CaseImportBody:
+      type: array
+      items: { $ref: '#/components/schemas/CaseCreate' }
+
+    CaseListResponse:
+      type: array
+      items: { $ref: '#/components/schemas/Case' }
+
+    ImportResult:
+      type: object
+      properties:
+        imported: { type: integer }
+        updated: { type: integer }
+        errors: { type: array, items: { type: string } }
+
+    StatusChangeRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [pending_review, approved, draft, archived] }
+        comment: { type: string }
+
+    Ticket:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        query: { type: string }
+        category: { type: string, nullable: true }
+        confidence: { type: number, nullable: true }
+        status: { type: string, enum: [open, in_progress, resolved, closed] }
+        assigned_to: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time, nullable: true }
+        resolution_notes: { type: string, nullable: true }
+        converted_to_case_id: { type: string, format: uuid, nullable: true }
+
+    TicketCreate:
+      type: object
+      required: [query]
+      properties:
+        query: { type: string }
+        category: { type: string }
+        confidence: { type: number }
+
+    TicketUpdate:
+      type: object
+      properties:
+        status: { type: string, enum: [open, in_progress, resolved, closed] }
+        assigned_to: { type: string }
+        resolution_notes: { type: string }
+
+    TicketListResponse:
+      type: array
+      items: { $ref: '#/components/schemas/Ticket' }
+
+    ConvertToCaseRequest:
+      type: object
+      properties:
+        title: { type: string }
+        category: { type: string }
+        response_template: { type: string }
+
+    ConvertToCaseResponse:
+      type: object
+      properties:
+        case_id: { type: string, format: uuid }
+        url: { type: string }
+
+    App:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        settings: { $ref: '#/components/schemas/AppSettings' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    AppCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string }
+        settings: { $ref: '#/components/schemas/AppSettings' }
+
+    AppUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        settings: { $ref: '#/components/schemas/AppSettings' }
+
+    AppListResponse:
+      type: array
+      items: { $ref: '#/components/schemas/App' }
+
+    AppSettings:
+      type: object
+      additionalProperties: true
+      properties:
+        search:
+          type: object
+          properties:
+            default_top_k: { type: integer, minimum: 1, maximum: 50 }
+            confidence_threshold: { type: number, minimum: 0, maximum: 1 }
