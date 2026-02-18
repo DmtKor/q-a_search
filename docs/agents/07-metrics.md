@@ -9,6 +9,7 @@
 - Основа требований: docs/main_doc и docs/agents/README.md, а также текущий файл docs/agents/07-metrics.md.
 - Контракты и миграции задаёт Модуль 00. Считай их “замороженными”.
 - Auth (01) даёт principal/token_id/app_id (если доступно) — нужно прокинуть в метрики.
+- Решения: endpoint = сырой путь (r.URL.Path); порядок Metrics → Auth → Handlers; обёртка ResponseWriter для status_code; интерфейс Writer, реализация в Glue; token_id/app_id — строка UUID или NULL. См. секцию «Уточнения».
 
 Ограничения по изменениям (важно):
 - Не меняй contracts/openapi.yaml и db/migrations/*.
@@ -55,18 +56,33 @@ Definition of Done:
   - MVP: синхронная запись допустима
   - предпочтительно: буфер/async writer (опционально)
 
+## Уточнения (решения по открытым вопросам)
+
+1. **Формат endpoint** — В MVP **сырой путь** `r.URL.Path`. В тестах и handoff зафиксировать. Позже при роутере с шаблонами — опция.
+
+2. **Порядок middleware** — Метрики для всех запросов (включая 401/403). Цепочка: **Metrics → Auth → Handlers**. Metrics первым; при 401/403 principal nil → token_id/app_id NULL. В 08 регистрировать в этом порядке.
+
+3. **status_code** — Оборачивать ResponseWriter, перехватывать WriteHeader(statusCode). Response wrapper.
+
+4. **Writer** — Интерфейс `Write(ctx, record)` в internal/metrics; реализация с pgxpool; Glue создаёт и передаёт. 07 не зависит от cmd/.
+
+5. **token_id, app_id** — В БД UUID; передавать строкой (UUID) или NULL при nil.
+
+6. **Интеграционный тест** — testcontainers + db/migrations, вызов через middleware, проверка записи. Отдельной тест-миграции не нужно.
+
 ## Интерфейсы
-- Middleware: `Metrics(next)` → пишет запись в `request_metrics`.
-- Writer: `Write(ctx, record)` (можно заменить на async реализацию).
+- Middleware: `Metrics(writer, ...)(next)` — замер времени, обёртка ResponseWriter для status_code, в конце writer.Write(ctx, record).
+- Writer: `Write(ctx, record)`; реализация с pgxpool в Glue.
 
 ## Тесты
 ### Unit
-- корректный маппинг endpoint (фиксировать: “сырое” значение пути или шаблон роута)
-- корректное измерение response_time_ms
+- endpoint = сырой путь (r.URL.Path); перехват status_code; в тестах фиксировать сырой путь.
+- измерение response_time_ms
 
 ### Integration
-- при вызове защищённого эндпоинта появляется запись с token_id/app_id (если доступно)
+- Postgres + миграции, вызов через middleware → запись в request_metrics; при 401 — запись есть, token_id/app_id NULL.
 
 ## Критерии приёмки
-- Метрики пишутся для всех эндпоинтов API, ошибки записи метрик не ломают основной запрос.
+- Метрики пишутся для всех запросов (включая 401/403), без query.
+- Ошибки записи метрик не ломают основной ответ.
 

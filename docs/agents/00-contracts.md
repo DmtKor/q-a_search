@@ -11,7 +11,7 @@
 - Embeddings храним только для cases.status=approved.
 - confidence = cosine similarity.
 
-Ограничения по изменениям (важно):
+Ограничения по изменениям (важно):F
 - ТЕБЕ МОЖНО создавать/править только контракты и схему:
   - contracts/openapi.yaml
   - contracts/examples/*
@@ -124,4 +124,25 @@ Definition of Done:
 - OpenAPI валидируется стандартным валидатором.
 - Миграции применяются на чистую БД (Postgres с pgvector).
 - Примеры соответствуют схемам OpenAPI (проверяется в contract tests).
+
+## Закреплённые команды (что именно используем)
+Используем эти команды для проверки контрактов и поднятия БД.
+
+### Postgres + pgvector (Docker)
+```bash
+docker run -d --name pgvector-test \
+     -e POSTGRES_PASSWORD=postgres \
+     -e POSTGRES_DB=kb \
+     -p 5432:5432 \
+     pgvector/pgvector:pg16
+```
+После запуска контейнера накатить миграции (например `psql` или migrate-инструмент) на БД `kb`, пользователь `postgres`, пароль `postgres`, порт `5432`.
+
+### Валидация OpenAPI (swagger-cli)
+```bash
+cd /home/cdcat/docs/projects
+npm init -y
+npm install @apidevtools/swagger-cli
+npx swagger-cli validate contracts/openapi.yaml
+```
 

@@ -100,6 +100,27 @@ Definition of Done:
 - `AppSettingsReader`
   - `GetEffectiveSearchSettings(ctx, principal) (threshold float64, defaultTopK int, err error)`
 
+## Уточнения (решения по открытым вопросам)
+Закреплено для согласованной реализации и интеграции с 04/05/08.
+
+1. **AppSettingsReader при staff без app_id**  
+   Интерфейс только `GetEffectiveSearchSettings(ctx, principal)`. Реализация (модуль 05) при отсутствии app (например staff-токен без app_id) возвращает дефолты (например threshold=0.7, defaultTopK=10). Модуль 02 только вызывает интерфейс; в тестах мокаем любые значения.
+
+2. **Формула объединения vector + FTS**  
+   Берём по `2*top_k` кандидатов из vector и из FTS, объединяем по `case_id` (при дубликате оставляем запись с лучшим cosine), реранжируем по формуле (например RRF или `0.5*норм_cosine + 0.5*норм_fts_rank`), затем берём `top_k`. В ответе у каждого chunk по-прежнему **confidence = cosine similarity** (векторный скор).
+
+3. **TicketRef.url**  
+   Формат URL не задаётся в 02. Формирует тот, кто реализует TicketsWriter (модуль 04/Glue); модуль 02 только подставляет в ответ возвращённый `ticketURL`. В тестах мок может возвращать, например, `"/api/v1/tickets/" + id`.
+
+4. **Данные для CreateLowConfidenceTicket**  
+   В интерфейсе использовать структуру с полями: **Query** (string), **Category** (optional string), **Confidence** (float) — по полям таблицы `tickets`.
+
+5. **search_tsv в тестах**  
+   В БД `search_tsv` заполняется приложением при INSERT/UPDATE кейса (модуль 03). Модуль 02 только читает. В интеграционных тестах 02 в фикстурах явно проставлять `search_tsv` (например через `to_tsvector(...)` в SQL), чтобы FTS-тесты были предсказуемыми.
+
+6. **Валидация top_k**  
+   OpenAPI: minimum 1, maximum 50. Если в запросе не передан `top_k` — брать `defaultTopK` из настроек (AppSettingsReader). Итоговый `top_k_effective` ограничивать диапазоном [1, 50]; при значении вне диапазона возвращать **422** с `validation_error`.
+
 ## Алгоритм (обязательная логика)
 1) Взять `query`, `category?`, `top_k?`.
 2) Получить настройки: `threshold`, `defaultTopK`.

@@ -9,7 +9,8 @@
 - Основа требований: docs/main_doc и docs/agents/README.md, а также текущий файл docs/agents/03-cases.md.
 - Контракты и миграции задаёт Модуль 00 (contracts/openapi.yaml и db/migrations/*). Считай их “замороженными”.
 - Auth и principal в context даёт модуль 01 (нужен для “draft только создателю”).
-- Embedding provider нужен только при переходе pending_review → approved.
+- Embedding provider нужен только при переходе pending_review → approved (тот же интерфейс, что в модуле 02; инжекция в Glue).
+- Критичные решения: DELETE = soft (archived), replace = DELETE FROM cases + CASCADE, merge по опциональному id, 409 для PUT не возвращаем, comment опционален → cases.notes, повторный approve идемпотентен (200), search_tsv = to_tsvector('simple', ...), GET list draft только если created_by==principal. Подробно — секция «Уточнения» в теле документа.
 
 Ограничения по изменениям (важно):
 - Не меняй contracts/openapi.yaml и db/migrations/* (это зона Модуля 00).
@@ -75,7 +76,7 @@ Definition of Done:
 Для staff principal:
 - Если `case.status='draft'`:
   - `GET /cases/{id}` и `PUT /cases/{id}` разрешены только если `created_by == principal`
-  - `DELETE /cases/{id}`: решение MVP — только создатель
+  - `DELETE /cases/{id}`: только создатель (MVP); семантика — **soft delete** (status → archived, удалить запись из case_embeddings).
 - Если статус не draft: доступ staff (без детализации ролей в MVP)
 
 ## CRUD поведение
@@ -121,11 +122,31 @@ Definition of Done:
 Уточнение по `replace` (фиксируем):
 - `replace` затрагивает только `cases` и `case_embeddings`.
 - `tickets`, `apps`, `auth_tokens`, `request_metrics` не трогаются.
+- При replace выполнять **только** `DELETE FROM cases` (все строки, в т.ч. archived); очистка `case_embeddings` идёт автоматически по **ON DELETE CASCADE**. Отдельно из `case_embeddings` не удалять.
+
+## Уточнения (решения по открытым вопросам)
+
+1. **DELETE /cases/{id}** — В MVP **только soft delete**: обновление `status = 'archived'` и удаление записи из `case_embeddings`. Hard delete в обычном API не делать. При **replace** импортом удаляются все строки из `cases` (в т.ч. archived), затем вставка импорта; CASCADE чистит `case_embeddings`.
+
+2. **Import mode=merge** — Сопоставление **по опциональному id**. В каждом элементе массива импорта допускается **опциональное поле `id`**. Если `id` задан и кейс с таким id существует — обновить этот кейс, иначе создать новый. Если в текущем OpenAPI в схеме тела импорта нет поля `id`, реализация может принимать его как дополнительное поле (расширение JSON); при первой возможности добавить опциональное `id` в схему импорта в модуле 00.
+
+3. **PUT /cases/{id} и 409** — В текущем MVP **409 для PUT /cases/{id} не возвращается** (нет version/etag, конфликт не детектируем). Единственный сценарий 409 оставить на будущее (например при появлении версий). В ответах PUT использовать только 200, 400, 401, 403, 404, 422.
+
+4. **Комментарий при pending_review → draft** — Поле `comment` в StatusChangeRequest **опционально** (при отсутствии не возвращать 422). Значение записывать в **`cases.notes`** (дописывание к существующему тексту или перезапись — на усмотрение реализации; для истории разумно дописывать с разделителем/датой).
+
+5. **Повторный approve (идемпотентность)** — Если кейс уже в статусе `approved` и приходит `POST /cases/{id}/status` с `status: approved`: возвращать **200** и текущий case (идемпотентно). Embedding не пересчитывать повторно.
+
+6. **Формат текста для search_tsv (FTS)** — Собирать текст из **title** + **keywords** (элементы массива склеить через пробел) + **questions** (элементы массива склеить через пробел); один вызов `to_tsvector`. Конфиг словаря: **`simple`** для MVP (без морфологии). При необходимости позже перейти на `russian` — уточнить в миграции/конфиге.
+
+7. **Embedding provider** — Модуль 03 **использует тот же интерфейс**, что и модуль 02 (например `internal/search` или общий пакет: `EmbedQuery(ctx, text string) ([]float32, error)` или аналог). Свой интерфейс в 03 не определять. Инжекция одного EmbeddingProvider задаётся в 08-glue; 03 только принимает его в конструкторе сервиса.
+
+8. **Replace и CASCADE** — См. выше в блоке Import/Export: при replace выполнять только `DELETE FROM cases`; на CASCADE по `case_embeddings` полагаемся.
+
+9. **GET /cases (list) и draft** — При `GET /cases` кейсы со статусом **draft** включаются в список **только если `created_by == principal`**. Draft-кейсы других создателей в список не попадают. Параметр `mine=true` при необходимости фильтрует список только по кейсам, созданным principal (то же правило для draft: только свои).
 
 ## FTS: заполнение `search_tsv`
 Модуль обязан поддерживать формирование `search_tsv` на `POST/PUT`.
-Минимум: включать `title`, `keywords`, `questions` (как текст).
-Язык/словарь можно оставить дефолтным (уточнить позже).
+Текст: конкатенация title + keywords (массивы через пробел) + questions (массивы через пробел); один вызов `to_tsvector` с конфигом **simple** (см. п. 6 выше).
 
 ## Тесты
 ### Unit
