@@ -14,19 +14,23 @@ import (
 	appshandler "github.com/yourusername/project/internal/apps/http"
 	searchhandler "github.com/yourusername/project/internal/search/http"
 	ticketshttp "github.com/yourusername/project/internal/tickets/http"
+	"github.com/yourusername/project/internal/template"
 )
 
 // RouterConfig holds dependencies for building the HTTP handler chain.
 type RouterConfig struct {
-	MetricsWriter    metrics.Writer
-	TokenStore       auth.TokenStore
-	Secret           []byte
-	RequestLogLevel  string // none | minimal | detailed
+	MetricsWriter       metrics.Writer
+	TokenStore          auth.TokenStore
+	Secret              []byte
+	RequestLogLevel          string // none | minimal | detailed
+	TemplatePreviewHandler   *template.PreviewHandler
+	TemplateReadableHandler  *template.ReadableHandler
 
-	SearchHandler  *searchhandler.Handler
-	CasesHandler   *caseshttp.Handler
-	TicketsHandler *ticketshttp.Handler
-	AppsHandler    *appshandler.Handler
+	SearchHandler    *searchhandler.Handler
+	CasesHandler     *caseshttp.Handler
+	CategoriesHandler *caseshttp.CategoriesHandler
+	TicketsHandler   *ticketshttp.Handler
+	AppsHandler      *appshandler.Handler
 }
 
 // Handler returns the full middleware chain and mux: Metrics -> Auth -> EnrichPrincipal -> routes.
@@ -35,6 +39,9 @@ func Handler(cfg RouterConfig) nethttp.Handler {
 	mux := nethttp.NewServeMux()
 
 	mux.Handle("POST /api/v1/search", authmw.RequireAppOrStaff(cfg.SearchHandler))
+	mux.Handle("GET /api/v1/cases/categories", authmw.RequireAppOrStaff(cfg.CategoriesHandler))
+	mux.Handle("POST /api/v1/cases/render-preview", authmw.RequireStaff(cfg.TemplatePreviewHandler))
+	mux.Handle("POST /api/v1/cases/template-readable", authmw.RequireStaff(cfg.TemplateReadableHandler))
 	mux.Handle("/api/v1/cases", authmw.RequireStaff(cfg.CasesHandler))
 	mux.Handle("/api/v1/cases/", authmw.RequireStaff(cfg.CasesHandler))
 	mux.Handle("/api/v1/tickets", authmw.RequireStaff(cfg.TicketsHandler))

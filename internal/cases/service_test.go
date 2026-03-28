@@ -46,6 +46,8 @@ func (m *mockRepo) GetByID(ctx context.Context, id string) (*Case, error) {
 	return nil, ErrNotFound
 }
 
+func (m *mockRepo) ListCategories(ctx context.Context) ([]string, error) { return nil, nil }
+
 func (m *mockRepo) List(ctx context.Context, filters ListFilters, principalID string) ([]Case, error) {
 	if m.listErr != nil {
 		return nil, m.listErr
@@ -154,17 +156,33 @@ func TestService_Get_NonDraftAnyStaff(t *testing.T) {
 	}
 }
 
-func TestService_ChangeStatus_InvalidTransition(t *testing.T) {
+func TestService_ChangeStatus_InvalidStatusValue(t *testing.T) {
 	ctx := context.Background()
 	c := &Case{ID: "case-1", Status: StatusDraft, CreatedBy: ptr("tid")}
 	repo := &mockRepo{caseByID: map[string]*Case{"case-1": c}}
 	svc := &Service{Repo: repo}
 	principal := &auth.Principal{TokenID: "tid", TokenType: "staff"}
 
-	// draft -> approved not allowed
-	_, err := svc.ChangeStatus(ctx, "case-1", StatusChangeRequest{Status: StatusApproved}, principal)
+	_, err := svc.ChangeStatus(ctx, "case-1", StatusChangeRequest{Status: "invalid"}, principal)
 	if !errors.Is(err, ErrInvalidStatus) {
-		t.Errorf("expected ErrInvalidStatus, got %v", err)
+		t.Errorf("expected ErrInvalidStatus for invalid status value, got %v", err)
+	}
+}
+
+func TestService_ChangeStatus_AnyTransitionAllowed(t *testing.T) {
+	ctx := context.Background()
+	c := &Case{ID: "case-1", Status: StatusDraft, CreatedBy: ptr("tid")}
+	repo := &mockRepo{caseByID: map[string]*Case{"case-1": c}}
+	svc := &Service{Repo: repo}
+	principal := &auth.Principal{TokenID: "tid", TokenType: "staff"}
+
+	// draft -> approved is allowed
+	got, err := svc.ChangeStatus(ctx, "case-1", StatusChangeRequest{Status: StatusApproved}, principal)
+	if err != nil {
+		t.Fatalf("draft -> approved: %v", err)
+	}
+	if got.Status != StatusApproved {
+		t.Errorf("got status %s", got.Status)
 	}
 }
 

@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApi } from '@/api/request'
 import { useSettings } from '@/store/settings'
-import type { SearchRequest, SearchResponse, Chunk } from '@/api/types'
+import type { CategoriesResponse, SearchRequest, SearchResponse, Chunk } from '@/api/types'
 
 function ChunkRow({ chunk, isStaff }: { chunk: Chunk; isStaff: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -39,8 +39,17 @@ export function Search() {
   const [category, setCategory] = useState('')
   const [topK, setTopK] = useState<number | ''>(10)
   const [userContextRaw, setUserContextRaw] = useState('')
+  const [noTicketOnLowConfidence, setNoTicketOnLowConfidence] = useState(true)
   const [result, setResult] = useState<SearchResponse | null>(null)
   const [loading, setLoading] = useState(false)
+  const [categories, setCategories] = useState<string[]>([])
+  const [categoryOtherMode, setCategoryOtherMode] = useState(false)
+
+  useEffect(() => {
+    request<CategoriesResponse>('cases/categories').then(({ data }) => {
+      if (data?.categories) setCategories(data.categories)
+    })
+  }, [request])
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -63,6 +72,7 @@ export function Search() {
       ...(category.trim() && { category: category.trim() }),
       ...(topK !== '' && Number(topK) >= 1 && Number(topK) <= 50 && { top_k: Number(topK) }),
       ...(user_context && { user_context }),
+      ...(noTicketOnLowConfidence && { no_ticket_on_low_confidence: true }),
     }
     try {
       const { data } = await request<SearchResponse>('search', { method: 'POST', body })
@@ -89,12 +99,30 @@ export function Search() {
         </div>
         <div className="form-group">
           <label htmlFor="category">Категория</label>
-          <input
+          <select
             id="category"
-            value={category}
-            onChange={(e) => setCategory(e.target.value)}
-            placeholder="Опционально"
-          />
+            value={categoryOtherMode ? '__other__' : (categories.includes(category) ? category : '')}
+            onChange={(e) => {
+              const v = e.target.value
+              setCategoryOtherMode(v === '__other__')
+              setCategory(v === '__other__' ? '' : v)
+            }}
+            style={{ width: '100%', maxWidth: 280 }}
+          >
+            <option value="">Не выбрано</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+            <option value="__other__">— ввести свою —</option>
+          </select>
+          {(categoryOtherMode || (category && !categories.includes(category))) && (
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Введите категорию"
+              style={{ marginTop: '0.5rem', width: '100%', maxWidth: 280 }}
+            />
+          )}
         </div>
         <div className="form-group">
           <label htmlFor="topK">Количество результатов (top_k)</label>
@@ -121,6 +149,16 @@ export function Search() {
         <button type="submit" className="primary" disabled={loading}>
           {loading ? 'Поиск…' : 'Искать'}
         </button>
+        <div style={{ marginTop: '1rem', textAlign: 'left' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+            <input
+              type="checkbox"
+              checked={noTicketOnLowConfidence}
+              onChange={(e) => setNoTicketOnLowConfidence(e.target.checked)}
+            />
+            Не создавать тикет при плохом результате
+          </label>
+        </div>
       </form>
 
       {result && (

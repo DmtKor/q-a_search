@@ -111,18 +111,24 @@ func main() {
 	// Handlers
 	searchHandler := &searchhandler.Handler{Service: searchSvc}
 	casesHandler := &caseshttp.Handler{Service: casesSvc}
+	categoriesHandler := &caseshttp.CategoriesHandler{Service: casesSvc}
 	ticketsHandler := &ticketshttp.Handler{Service: ticketsSvc}
 	appsHandler := &appshandler.Handler{Service: appsSvc}
+	templatePreviewHandler := &template.PreviewHandler{Renderer: renderer}
+	templateReadableHandler := &template.ReadableHandler{}
 
 	handler := httppkg.Handler(httppkg.RouterConfig{
-		MetricsWriter:   metricsWriter,
-		TokenStore:     tokenStore,
-		Secret:         cfg.Secret,
-		RequestLogLevel: cfg.RequestLogLevel,
-		SearchHandler:  searchHandler,
-		CasesHandler:   casesHandler,
-		TicketsHandler: ticketsHandler,
-		AppsHandler:    appsHandler,
+		MetricsWriter:          metricsWriter,
+		TokenStore:             tokenStore,
+		Secret:                 cfg.Secret,
+		RequestLogLevel:        cfg.RequestLogLevel,
+		TemplatePreviewHandler: templatePreviewHandler,
+		TemplateReadableHandler: templateReadableHandler,
+		SearchHandler:          searchHandler,
+		CasesHandler:           casesHandler,
+		CategoriesHandler:      categoriesHandler,
+		TicketsHandler:         ticketsHandler,
+		AppsHandler:            appsHandler,
 	})
 
 	addr := getEnv("LISTEN_ADDR", ":8080")

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApi } from '@/api/request'
 import { clientLog } from '@/lib/clientLog'
-import type { Case, CaseStatus } from '@/api/types'
+import type { Case, CaseStatus, CategoriesResponse } from '@/api/types'
 
 function groupByCategory(cases: Case[]): Map<string, Case[]> {
   const map = new Map<string, Case[]>()
@@ -20,28 +20,31 @@ export function CasesList() {
   const [loading, setLoading] = useState(true)
   const [statusFilter, setStatusFilter] = useState<CaseStatus | ''>('')
   const [categoryFilter, setCategoryFilter] = useState('')
-  const [mineOnly, setMineOnly] = useState(false)
   const [appliedStatus, setAppliedStatus] = useState<CaseStatus | ''>('')
   const [appliedCategory, setAppliedCategory] = useState('')
-  const [appliedMine, setAppliedMine] = useState(false)
   const [expandedCategories, setExpandedCategories] = useState<Set<string> | null>(null)
+  const [categories, setCategories] = useState<string[]>([])
+
+  useEffect(() => {
+    request<CategoriesResponse>('cases/categories').then(({ data }) => {
+      if (data?.categories) setCategories(data.categories)
+    })
+  }, [request])
 
   const fetchList = useCallback(() => {
     setAppliedStatus(statusFilter)
     setAppliedCategory(categoryFilter)
-    setAppliedMine(mineOnly)
     setLoading(true)
     const params = new URLSearchParams()
     if (statusFilter) params.set('status', statusFilter)
     if (categoryFilter.trim()) params.set('category', categoryFilter.trim())
-    if (mineOnly) params.set('mine', 'true')
     const q = params.toString()
     request<Case[]>(`cases${q ? `?${q}` : ''}`).then(({ data }) => {
       setList(Array.isArray(data) ? data : [])
       setLoading(false)
-      clientLog('cases_filter_applied', { status: statusFilter, category: categoryFilter.trim(), mine: mineOnly, count: Array.isArray(data) ? data.length : 0 })
+      clientLog('cases_filter_applied', { status: statusFilter, category: categoryFilter.trim(), count: Array.isArray(data) ? data.length : 0 })
     })
-  }, [statusFilter, categoryFilter, mineOnly, request])
+  }, [statusFilter, categoryFilter, request])
 
   useEffect(() => {
     fetchList()
@@ -63,7 +66,7 @@ export function CasesList() {
   const collapseAll = () => setExpandedCategories(new Set())
 
   const hasFilterChange =
-    appliedStatus !== statusFilter || appliedCategory !== categoryFilter.trim() || appliedMine !== mineOnly
+    appliedStatus !== statusFilter || appliedCategory !== categoryFilter.trim()
 
   return (
     <>
@@ -82,18 +85,17 @@ export function CasesList() {
             <option value="approved">approved</option>
             <option value="archived">archived</option>
           </select>
-          <input
-            type="text"
-            placeholder="Категория"
+          <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            style={{ width: 160 }}
+            style={{ width: 'auto', minWidth: 160 }}
             aria-label="Категория"
-          />
-          <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
-            <input type="checkbox" checked={mineOnly} onChange={(e) => setMineOnly(e.target.checked)} />
-            Только мои
-          </label>
+          >
+            <option value="">Все</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
           <button type="button" className="primary" onClick={fetchList} disabled={loading}>
             {loading ? 'Загрузка…' : 'Применить фильтры'}
           </button>

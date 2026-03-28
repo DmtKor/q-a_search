@@ -87,7 +87,7 @@ func (s *Service) Search(ctx context.Context, req SearchRequest, principal *auth
 
 	resp := &SearchResponse{Chunks: chunks}
 
-	if len(merged) > 0 {
+	if len(merged) > 0 && !req.NoTicketOnLowConfidence {
 		top1Confidence := sanitizeConfidence(merged[0].CosineSimilarity)
 		if top1Confidence < threshold {
 			ticketID, ticketURL, err := s.Tickets.CreateLowConfidenceTicket(ctx, LowConfidenceTicketData{

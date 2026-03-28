@@ -63,6 +63,8 @@ func (m *mockCasesService) Import(ctx context.Context, mode cases.ImportMode, it
 	return cases.ImportResult{Imported: len(items)}, nil
 }
 
+func (m *mockCasesService) ListCategories(ctx context.Context) ([]string, error) { return nil, nil }
+
 func (m *mockCasesService) Export(ctx context.Context, category, status string, principal *auth.Principal) ([]cases.Case, error) {
 	return m.listCases, nil
 }

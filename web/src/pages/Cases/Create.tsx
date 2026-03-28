@@ -1,17 +1,25 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useApi } from '@/api/request'
-import type { CaseCreate as CaseCreateType } from '@/api/types'
+import type { CaseCreate as CaseCreateType, CategoriesResponse } from '@/api/types'
 
 export function CaseCreate() {
   const navigate = useNavigate()
   const { request } = useApi()
+  const [categories, setCategories] = useState<string[]>([])
+  const [categoryOtherMode, setCategoryOtherMode] = useState(false)
   const [category, setCategory] = useState('')
   const [title, setTitle] = useState('')
   const [responseTemplate, setResponseTemplate] = useState('')
   const [questions, setQuestions] = useState('')
   const [keywords, setKeywords] = useState('')
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    request<CategoriesResponse>('cases/categories').then(({ data }) => {
+      if (data?.categories) setCategories(data.categories)
+    })
+  }, [request])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -39,7 +47,31 @@ export function CaseCreate() {
       <form onSubmit={handleSubmit} className="card" style={{ maxWidth: 560 }}>
         <div className="form-group">
           <label>Категория *</label>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} required />
+          <select
+            value={categoryOtherMode ? '__other__' : (categories.includes(category) ? category : '')}
+            onChange={(e) => {
+              const v = e.target.value
+              setCategoryOtherMode(v === '__other__')
+              setCategory(v === '__other__' ? '' : v)
+            }}
+            style={{ width: '100%', maxWidth: 280 }}
+            required={!categoryOtherMode && !category}
+          >
+            <option value="">Выберите или введите свою ниже</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+            <option value="__other__">— ввести новую —</option>
+          </select>
+          {(categoryOtherMode || (category && !categories.includes(category))) && (
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Новая категория"
+              style={{ marginTop: '0.5rem', width: '100%', maxWidth: 280 }}
+              required
+            />
+          )}
         </div>
         <div className="form-group">
           <label>Заголовок *</label>

@@ -18,6 +18,27 @@ type Handler struct {
 	Service cases.CaseService
 }
 
+// CategoriesHandler serves GET only and returns list of categories. Use with RequireAppOrStaff so search form can load categories with app token.
+type CategoriesHandler struct {
+	Service cases.CaseService
+}
+
+// ServeHTTP responds to GET with {"categories": ["a", "b", ...]}.
+func (h *CategoriesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		authmw.WriteError(w, "validation_error", "Method not allowed", http.StatusMethodNotAllowed, nil)
+		return
+	}
+	list, err := h.Service.ListCategories(r.Context())
+	if err != nil {
+		authmw.WriteError(w, "internal_error", "An internal error occurred", http.StatusInternalServerError, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"categories": list})
+}
+
 // ServeHTTP dispatches by method and path.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	path := strings.TrimPrefix(r.URL.Path, "/api/v1/cases")
@@ -38,6 +59,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		if r.Method == http.MethodPost {
 			h.Create(w, r, principal)
+			return
+		}
+	case len(parts) == 1 && parts[0] == "categories":
+		if r.Method == http.MethodGet {
+			h.ListCategories(w, r)
 			return
 		}
 	case len(parts) == 1 && parts[0] == "import":
@@ -87,6 +113,17 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request, principal *auth.P
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(list)
+}
+
+func (h *Handler) ListCategories(w http.ResponseWriter, r *http.Request) {
+	list, err := h.Service.ListCategories(r.Context())
+	if err != nil {
+		authmw.WriteError(w, "internal_error", "An internal error occurred", http.StatusInternalServerError, nil)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"categories": list})
 }
 
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request, principal *auth.Principal) {

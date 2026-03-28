@@ -16,6 +16,7 @@ type CaseService interface {
 	Create(ctx context.Context, body CaseCreate, principalID string) (*Case, error)
 	Get(ctx context.Context, id string, principal *auth.Principal) (*Case, error)
 	List(ctx context.Context, filters ListFilters, principal *auth.Principal) ([]Case, error)
+	ListCategories(ctx context.Context) ([]string, error)
 	Update(ctx context.Context, id string, body CaseUpdate, principal *auth.Principal) (*Case, error)
 	Delete(ctx context.Context, id string, principal *auth.Principal) error
 	ChangeStatus(ctx context.Context, id string, req StatusChangeRequest, principal *auth.Principal) (*Case, error)
@@ -28,6 +29,7 @@ type CaseRepository interface {
 	Create(ctx context.Context, c *Case, searchTSVInput string) error
 	GetByID(ctx context.Context, id string) (*Case, error)
 	List(ctx context.Context, filters ListFilters, principalID string) ([]Case, error)
+	ListCategories(ctx context.Context) ([]string, error)
 	Update(ctx context.Context, id string, u *CaseUpdate, searchTSVInput string, updatedBy string) (*Case, error)
 	SetStatus(ctx context.Context, id string, status string, comment string, principalID string) (*Case, error)
 	SoftDelete(ctx context.Context, id string) error

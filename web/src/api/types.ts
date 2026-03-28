@@ -10,11 +10,16 @@ export interface ErrorEnvelope {
   }
 }
 
+export interface CategoriesResponse {
+  categories: string[]
+}
+
 export interface SearchRequest {
   query: string
   category?: string
   top_k?: number
   user_context?: Record<string, unknown>
+  no_ticket_on_low_confidence?: boolean
 }
 
 export interface Chunk {
@@ -144,4 +149,15 @@ export interface AppCreate {
 export interface AppUpdate {
   name?: string
   settings?: AppSettings
+}
+
+export interface ReadableSegment {
+  type: 'literal' | 'readable' | 'raw'
+  text?: string
+  code?: string
+  description?: string
+}
+
+export interface TemplateReadableResponse {
+  segments: ReadableSegment[]
 }

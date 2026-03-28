@@ -64,6 +64,11 @@ func (s *Service) List(ctx context.Context, filters ListFilters, principal *auth
 	return s.Repo.List(ctx, filters, principalID)
 }
 
+// ListCategories returns distinct category names for dropdowns.
+func (s *Service) ListCategories(ctx context.Context) ([]string, error) {
+	return s.Repo.ListCategories(ctx)
+}
+
 // Update updates a case; cannot change status; recalculates search_tsv; if approved and content changed, refresh embedding.
 func (s *Service) Update(ctx context.Context, id string, body CaseUpdate, principal *auth.Principal) (*Case, error) {
 	c, err := s.Repo.GetByID(ctx, id)
@@ -117,7 +122,12 @@ func (s *Service) Delete(ctx context.Context, id string, principal *auth.Princip
 	return s.Repo.SoftDelete(ctx, id)
 }
 
-// ChangeStatus applies allowed transitions; embedding lifecycle: approved → upsert, leave approved → delete.
+// ValidStatus returns true if s is one of the allowed status values.
+func ValidStatus(s string) bool {
+	return s == StatusDraft || s == StatusPendingReview || s == StatusApproved || s == StatusArchived
+}
+
+// ChangeStatus allows any transition between the four statuses; embedding lifecycle: approved → upsert, leave approved → delete.
 func (s *Service) ChangeStatus(ctx context.Context, id string, req StatusChangeRequest, principal *auth.Principal) (*Case, error) {
 	c, err := s.Repo.GetByID(ctx, id)
 	if err != nil {
@@ -126,23 +136,13 @@ func (s *Service) ChangeStatus(ctx context.Context, id string, req StatusChangeR
 	from := c.Status
 	to := req.Status
 
-	// Idempotent: already approved and request approved → 200
-	if from == StatusApproved && to == StatusApproved {
-		return c, nil
+	if !ValidStatus(to) {
+		return nil, ErrInvalidStatus
 	}
 
-	// Allowed transitions
-	switch {
-	case from == StatusDraft && to == StatusPendingReview:
-		if !auth.IsOwner(principal, ptrStr(c.CreatedBy)) {
-			return nil, ErrForbidden
-		}
-	case from == StatusPendingReview && (to == StatusApproved || to == StatusDraft):
-		// any staff
-	case from == StatusApproved && to == StatusArchived:
-		// any staff
-	default:
-		return nil, ErrInvalidStatus
+	// Idempotent: same status → 200
+	if from == to {
+		return c, nil
 	}
 
 	updated, err := s.Repo.SetStatus(ctx, id, to, req.Comment, principal.TokenID)

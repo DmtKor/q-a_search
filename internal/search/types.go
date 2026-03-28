@@ -20,10 +20,11 @@ type Candidate struct {
 
 // SearchRequest is the API request body (OpenAPI SearchRequest).
 type SearchRequest struct {
-	Query       string                 `json:"query"`
-	Category    string                 `json:"category,omitempty"`
-	TopK        *int                   `json:"top_k,omitempty"`
-	UserContext map[string]interface{} `json:"user_context,omitempty"`
+	Query                    string                 `json:"query"`
+	Category                 string                 `json:"category,omitempty"`
+	TopK                     *int                   `json:"top_k,omitempty"`
+	UserContext              map[string]interface{} `json:"user_context,omitempty"`
+	NoTicketOnLowConfidence  bool                  `json:"no_ticket_on_low_confidence,omitempty"`
 }
 
 // Chunk is one item in the response (OpenAPI Chunk).

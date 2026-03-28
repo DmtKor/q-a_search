@@ -1,13 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useApi } from '@/api/request'
-import type { Case, CaseStatus } from '@/api/types'
+import type { Case, CaseStatus, CategoriesResponse } from '@/api/types'
 
 export function CaseExport() {
   const { request, getTokenForRequest } = useApi()
+  const [categories, setCategories] = useState<string[]>([])
+  const [categoryOtherMode, setCategoryOtherMode] = useState(false)
   const [status, setStatus] = useState<CaseStatus | ''>('')
   const [category, setCategory] = useState('')
   const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    request<CategoriesResponse>('cases/categories').then(({ data }) => {
+      if (data?.categories) setCategories(data.categories)
+    })
+  }, [request])
 
   const handleExport = async () => {
     const token = getTokenForRequest()
@@ -49,7 +57,29 @@ export function CaseExport() {
         </div>
         <div className="form-group">
           <label>Категория</label>
-          <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Опционально" />
+          <select
+            value={categoryOtherMode ? '__other__' : (categories.includes(category) ? category : '')}
+            onChange={(e) => {
+              const v = e.target.value
+              setCategoryOtherMode(v === '__other__')
+              setCategory(v === '__other__' ? '' : v)
+            }}
+            style={{ width: '100%', maxWidth: 280 }}
+          >
+            <option value="">Не выбрано</option>
+            {categories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+            <option value="__other__">— ввести свою —</option>
+          </select>
+          {(categoryOtherMode || (category && !categories.includes(category))) && (
+            <input
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+              placeholder="Введите категорию"
+              style={{ marginTop: '0.5rem', width: '100%', maxWidth: 280 }}
+            />
+          )}
         </div>
         <button type="button" className="primary" onClick={handleExport} disabled={loading}>
           {loading ? 'Экспорт…' : 'Скачать JSON'}

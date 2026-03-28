@@ -130,6 +130,24 @@ func (p *Pool) List(ctx context.Context, filters cases.ListFilters, principalID 
 	return list, rows.Err()
 }
 
+// ListCategories returns distinct non-empty category names from cases, sorted.
+func (p *Pool) ListCategories(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT DISTINCT category FROM cases WHERE category != '' ORDER BY category`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, rows.Err()
+}
+
 func (p *Pool) Update(ctx context.Context, id string, u *cases.CaseUpdate, searchTSVInput string, updatedBy string) (*cases.Case, error) {
 	conn, err := p.conn(ctx)
 	if err != nil {
