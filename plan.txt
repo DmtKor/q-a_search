@@ -1,0 +1,118 @@
+1. Описание проекта
+
+Проект представляет собой систему управления базой знаний с гибридным поиском (семантический + полнотекстовый) на базе PostgreSQL + pgvector. Система позволяет хранить структурированные "кейсы" (вопросы/ответы с категориями, ключевыми словами и шаблонами ответов), выполнять поиск по ним с ранжированием, а также обрабатывать "тикеты" — запросы, на которые система не смогла найти уверенный ответ. В проекте реализована MVP-версия: сырая, но с работающим основным функционалом: CRUD кейсов, гибридный поиск, система тикетов, конвертация тикетов в кейсы, управление приложениями (мультитенантность), рендеринг шаблонов ответов, метрики запросов и демо-интерфейс.
+
+2. Структура проекта
+
+.
++-- cmd
+|   +-- api/main.go             # точка входа сервера
+|   +-- seed-token/main.go      # утилита создания токена
++-- contracts
+|   +-- openapi.yaml            # OpenAPI 3.0.3 спецификация
+|   +-- examples/               # примеры запросов/ответов (22 шт)
+|   +-- jsonschema/             # JSON Schema для настроек приложений
++-- db/migrations/0001_init.sql # схема БД (6 таблиц)
++-- integration/e2e/e2e_test.go # end-to-end тест
++-- internal
+|   +-- apps/                   # CRUD приложений + настройки
+|   |   +-- http/handler.go
+|   |   +-- repository/repository.go
+|   |   +-- service.go, types.go, validation.go, effectivesettings.go
+|   +-- auth/                   # аутентификация (Bearer + HMAC-SHA256)
+|   |   +-- bearer.go, hash.go, principal.go, owner.go
+|   |   +-- tokenstore.go, sqlstore.go
+|   +-- cases/                  # CRUD кейсов + статусы + lifecycle
+|   |   +-- http/handler.go
+|   |   +-- repository/repository.go
+|   |   +-- service.go, types.go, interfaces.go, errors.go
+|   |   +-- fts/fts.go
+|   +-- config/config.go        # загрузка env-конфигурации
+|   +-- embedding/stub.go       # заглушка эмбеддингов (1536-dim)
+|   +-- glue/case_creator.go    # адаптер tickets -> cases
+|   +-- http
+|   |   +-- router.go           # цепочка middleware + роутинг
+|   |   +-- middleware/
+|   |       +-- auth/           # Authenticate, RequireStaff, RequireAppOrStaff
+|   |       +-- cors/           # CORS
+|   |       +-- metrics/        # сбор метрик запросов
+|   |       +-- requestlog/     # логирование
+|   +-- metrics/                # запись метрик в request_metrics
+|   +-- search/                 # гибридный поиск (pgvector + FTS)
+|   |   +-- http/handler.go
+|   |   +-- repository/repository.go
+|   |   +-- service.go, types.go, merge.go, interfaces.go, errors.go
+|   +-- template/               # рендеринг шаблонов ответов
+|   |   +-- renderer.go, preview_handler.go, readable.go, readable_handler.go
+|   +-- tickets/                # CRUD тикетов + convert-to-case
+|       +-- http/handler.go
+|       +-- repository/repository.go
+|       +-- service.go, types.go, convert.go, interfaces.go, errors.go
++-- web/                        # демо-интерфейс (React + TypeScript + Vite)
+|   +-- src/
+|       +-- App.tsx             # корневой компонент с роутингом
+|       +-- api/                # HTTP-клиент, типы, запросы
+|       +-- pages/              # Search, Settings, Cases/, Tickets/, Apps/
+|       +-- components/         # ErrorBanner, Sidebar, TemplateReadableBlock
+|       +-- context/, store/, lib/
++-- go.mod, go.sum, package.json
+
+3. Запуск проекта
+
+1) Запустить PostgreSQL с pgvector:
+   docker run -d --name pgvector-test -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=kb -p 5432:5432 pgvector/pgvector:pg16
+
+2) Запустить API-сервер (из корня проекта):
+   export DATABASE_URL="postgres://postgres:postgres@localhost:5432/kb?sslmode=disable"
+   export AUTH_SECRET="dev-secret-change-in-production"
+   go run ./cmd/api
+
+3) В другом терминале создать staff-токен:
+   go run ./cmd/seed-token
+   (выведет значение токена: local-staff-token)
+
+4) Запустить демо-интерфейс:
+   cd web && npm install && npm run dev
+   Открыть http://localhost:5173, ввести токен и базовый URL API (http://localhost:8080) в Настройках.
+
+Проверка работоспособности:
+- Перейти в раздел "Кейсы", создать кейс, перевести его в pending_review, затем в approved
+- Перейти в раздел "Поиск", ввести запрос, убедиться, что поиск возвращает результаты
+- Если confidence ниже порога — в разделе "Тикеты" появится тикет
+
+4. Демонстрация работы проекта
+
+1) Страница входа/настроек — ввод Bearer token и базового URL
+2) Список кейсов (База знаний) — пустой список после запуска
+3) Создание нового кейса — форма создания с полями (категория, заголовок, вопросы, ключевые слова, шаблон ответа)
+4) Детальная страница кейса — просмотр созданного кейса
+5) Смена статуса кейса на pending_review, затем на approved
+6) Страница поиска — ввод поискового запроса, отображение результатов (chunks)
+7) Список тикетов — отображение созданного тикета (если поиск дал низкий confidence)
+8) Детальная страница тикета — просмотр и обработка тикета
+9) Конвертация тикета в кейс
+10) Список приложений — управление приложениями
+11) Настройки приложения — изменение порога confidence и top_k
+12) Импорт/экспорт кейсов
+
+5. Код проекта
+
+1) cmd/api/main.go — точка входа сервера: инициализация БД, DI, запуск HTTP
+2) internal/http/router.go — сборка middleware-цепочки и роутинг
+3) internal/http/middleware/auth/middleware.go — аутентификация и авторизация
+4) internal/cases/service.go — бизнес-логика кейсов
+5) internal/search/service.go — гибридный поиск (векторный + FTS)
+6) internal/search/merge.go — RRF-ранжирование результатов
+7) internal/tickets/service.go — бизнес-логика тикетов
+8) internal/apps/service.go — управление приложениями
+9) internal/template/renderer.go — рендеринг шаблонов ответов
+10) internal/embedding/stub.go — заглушка эмбеддингов
+11) db/migrations/0001_init.sql — полная схема БД
+12) contracts/openapi.yaml — спецификация OpenAPI
+13) web/src/App.tsx — корневой компонент React-приложения с роутингом
+14) web/src/api/client.ts — HTTP-клиент для работы с API
+15) web/src/pages/Search.tsx — страница поиска
+16) web/src/pages/Cases/List.tsx, Create.tsx, Detail.tsx — страницы управления кейсами
+17) web/src/pages/Tickets/List.tsx, Detail.tsx — страницы управления тикетами
+18) web/src/pages/Apps/List.tsx, Detail.tsx — страницы управления приложениями
+19) web/src/pages/Settings.tsx — страница настроек
